@@ -21,8 +21,11 @@ class image_converter:
         # initialize the node named vision
         rospy.init_node('vision', anonymous=True)
 
-
         self.joint_hues = [30, 120, 60, 0]
+
+        # Load templates for chamfer matching
+        self.template_circle = cv2.inRange(cv2.imread('sphere_target.png', 1), (200, 200, 200), (255, 255, 255))
+        self.template_rectangle = cv2.inRange(cv2.imread('rectangle_target.png', 1), (200, 200, 200), (255, 255, 255))
 
         # initialize the bridge between openCV and ROS
         self.bridge = CvBridge()
@@ -39,6 +42,8 @@ class image_converter:
         # Set up publishers
         self.joint_angles_pub = rospy.Publisher("joint_angles", Float64MultiArray, queue_size=10)
         self.joint_angles = Float64MultiArray()
+        self.end_effector_pos_pub = rospy.Publisher("end_effector_pos", Float64MultiArray, queue_size=10)
+        self.end_effector_pos = Float64MultiArray()
 
 
     def callback_image1(self,data):
@@ -60,15 +65,94 @@ class image_converter:
             self.cv_image2_updated = False
 
     def get_all_blobs(self, image):
-        return list(map(lambda hue: self.find_joint_blob(image, hue), self.joint_hues))
+        return list(map(lambda hue: self.find_blob(image, hue), self.joint_hues))
+
+    def find_targets(self, image):
+        blobs = self.find_blob(image, 15)
+
+        # Find all contours
+        contours, hierarchy = cv2.findContours(blobs, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+
+        if len(contours) != 2:
+            print(f"PROBLEM!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1\nthere is {len(contours)} contours")
+
+        def get_centroid_from_contours(cnt):
+            M = cv2.moments(cnt)
+            if M['m00'] == 0:
+                cx = 400 # Prevent some strange division by zero on edge cases
+                cy = 400
+            else:
+                cx = M['m10']/M['m00']
+                cy = M['m01']/M['m00']
+            return np.array([cx, cy], dtype=np.float64)
+
+        contours = list(map(lambda c: get_centroid_from_contours(c), contours))
+
+        def chamfer_match(center, template):
+            # Isolate the region of interest in the thresholded image
+            ROI = blobs[int(center[1] - template.shape[0] / 2): int(center[1] + template.shape[0] / 2) + 1,
+                  int(center[0] - template.shape[1] / 2): int(center[0] + template.shape[1] / 2) + 1]
+            ROI = ROI[0:template.shape[0], 0:template.shape[1]]  # making sure it has the same size as the template
+
+            # Apply the distance transform
+            dist = cv2.distanceTransform(cv2.bitwise_not(ROI), cv2.DIST_L2, 0)
+
+            # Get final error
+            img = dist * template
+            return np.sum(img)
+
+        def find_best_match(center, index):
+            matches = np.array([chamfer_match(center, self.template_circle), chamfer_match(center, self.template_rectangle)])
+            return np.array([np.argmin(matches), np.min(matches), index])
+
+        match_error = list(map(lambda center: find_best_match(center[0], center[1]), zip(contours, range(len(contours)))))
+        minimum_error = min(match_error, key=lambda elem: elem[1])
+        targets = [None, None]
+
+        targets[int(minimum_error[0])] = contours[int(minimum_error[2])]
+
+        if len(contours) >= 2:
+            match_error = list(filter(lambda elem: elem is not minimum_error, match_error))
+            next_minimum_error = min(match_error, key=lambda elem: elem[1])
+            targets[1-int(minimum_error[0])] = contours[int(next_minimum_error[2])]
+        
+        return targets
+
+
+        
+
+        
+
+    def find_blob(self, image, color_hue, constraint=5):
+        cv_image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        jointblob = cv2.inRange(cv_image_hsv, (color_hue-constraint, 100, 0), (color_hue + constraint, 255, 255))
+        return jointblob
+
+    def find_blob_centroid(self, blob):
+        #kernel = np.ones((5, 5), np.uint8)
+        #mask = cv2.dilate(blob, kernel, iterations=3)
+        mask = blob
+        M = cv2.moments(mask)
+        cx = M['m10']/M['m00']
+        cy = M['m01']/M['m00']
+        return np.array([cx, cy], dtype=np.float64)
+
+    def handle_missing_centroids(self, centroids_image1, centroids_image2):
+        #TODO: Sort out missing centroids here
+        return (centroids_image1, centroids_image2)
+
+
 
     def get_all_centroids(self):
-        #TODO: Sort out missing centroids
-        blobs_image1 = map(lambda hue: self.find_joint_blob(self.cv_image1, hue), self.joint_hues)
-        centroids_image1 = map(lambda blob: self.find_blob_centroid(blob), blobs_image1)
+        blobs_image1 = map(lambda hue: self.find_blob(self.cv_image1, hue), self.joint_hues)
+        centroids_image1 = list(map(lambda blob: self.find_blob_centroid(blob), blobs_image1))
+        centroids_image1 = centroids_image1 + self.find_targets(self.cv_image1)
 
-        blobs_image2 = map(lambda hue: self.find_joint_blob(self.cv_image2, hue), self.joint_hues)
-        centroids_image2 = map(lambda blob: self.find_blob_centroid(blob), blobs_image2)
+        blobs_image2 = map(lambda hue: self.find_blob(self.cv_image2, hue), self.joint_hues)
+        centroids_image2 = list(map(lambda blob: self.find_blob_centroid(blob), blobs_image2))
+        centroids_image2 = centroids_image2 + self.find_targets(self.cv_image2)
+
+        centroids_image1, centroids_image2 = self.handle_missing_centroids(centroids_image1, centroids_image2)
 
         # Image 1 gives information about yz coords, Image 2 about xz
         return list(zip(centroids_image1, centroids_image2))
@@ -139,9 +223,12 @@ class image_converter:
         centroids = self.get_all_centroids()
         centroid_world_coords = self.get_centroid_world_coordinates(centroids)
         robot_frame_joint_coords = self.get_3d_joint_positions(centroid_world_coords)
-        joint_angles = self.get_joint_angles(robot_frame_joint_coords)
+        joint_angles = self.get_joint_angles(robot_frame_joint_coords[:4])
 
         print(joint_angles)
+
+        self.find_targets(self.cv_image1)
+        self.find_targets(self.cv_image2)
 
         #vis_blobs = self.get_all_blobs(self.cv_image2)
 
@@ -155,26 +242,14 @@ class image_converter:
         # Publish the results
         self.joint_angles.data = joint_angles
         self.joint_angles_pub.publish(self.joint_angles)
+        self.end_effector_pos.data = robot_frame_joint_coords[3]
+        self.end_effector_pos_pub.publish(self.end_effector_pos)
 
 
     def x_marks_the_spot(self, image, x, y, color=(0,0,0)):
         cv2.line(image, (int(x)-10, int(y)-10), (int(x)+10, int(y)+10), color, thickness=2)
         cv2.line(image, (int(x)-10, int(y)+10), (int(x)+10, int(y)-10), color, thickness=2)
 
-    def find_joint_blob(self, image, color_hue):
-        constraint = 5
-        cv_image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        jointblob = cv2.inRange(cv_image_hsv, (color_hue-constraint, 100, 0), (color_hue + constraint, 255, 255))
-        return jointblob
-
-    def find_blob_centroid(self, blob):
-        #kernel = np.ones((5, 5), np.uint8)
-        #mask = cv2.dilate(blob, kernel, iterations=3)
-        mask = blob
-        M = cv2.moments(mask)
-        cx = M['m10']/M['m00']
-        cy = M['m01']/M['m00']
-        return np.array([cx, cy], dtype=np.float64)
 
 # call the class
 def main(args):
