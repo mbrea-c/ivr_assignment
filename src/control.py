@@ -8,8 +8,9 @@ from functools import reduce
 from math import atan2
 from math import pi
 from std_msgs.msg import String
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import Float64MultiArray, Float64
+import message_filters
 
 
 class control:
@@ -21,11 +22,20 @@ class control:
         rospy.init_node('control', anonymous=True)
 
         # Set up subscribers
-        joint_angles_sub = rospy.Subscriber("/joint_angles", Float64MultiArray, self.callback)
+        #joint_angles_sub = rospy.Subscriber("/joint_angles", Float64MultiArray, self.callback)
+        self.joint_angles_sub = rospy.Subscriber("/robot/joint_states", JointState, self.callback)
 
         # Set up publishers
         self.forward_kinematics_pub = rospy.Publisher("forward_kinematics", Float64MultiArray, queue_size=10)
         self.forward_kinematics = Float64MultiArray()
+        
+        # record the begining time
+    	self.time_trajectory = rospy.get_time()
+    	# initialize errors
+    	self.time_previous_step = np.array([rospy.get_time()], dtype='float64')      
+    	# initialize error and derivative of error for trajectory tracking  
+    	self.error = np.array([0.0,0.0], dtype='float64')  
+    	self.error_d = np.array([0.0,0.0], dtype='float64') 
 
 
 
@@ -41,9 +51,9 @@ class control:
                 [0,0,0,1]], dtype=np.float64)
 
     def compute_forward_kinematics(self, joint_angles):
-        [ theta2, theta3, theta4 ] = joint_angles
+        [ theta1, theta2, theta3, theta4 ] = joint_angles
         transform_matrices = [\
-                self.build_transform_matrix(0,0,2.5,0),\
+                self.build_transform_matrix(0,0,2.5,theta1),\
                 self.build_transform_matrix(theta2, 0, 0, 0),\
                 self.build_transform_matrix(theta3, 0, 3.5, -pi/2),\
                 self.build_transform_matrix(theta4, 0, 3, pi/2) ]
@@ -51,15 +61,37 @@ class control:
         homogeneus_final_coord = np.dot(fk_matrix, np.array([0,0,0,1]))
         homogeneus_final_coord = homogeneus_final_coord / homogeneus_final_coord[3]
         return homogeneus_final_coord[:3]
+        
+    def calculate_jacobian(self, joint_angles):
+    	pass
+    	
+    def closed_loop_control(self, joint_angles):
+    	K_p = np.array([[0.1,0],[0,0.1]])
+    	K_d = np.array([[0.1,0],[0,0.1]])
+    	# estimate time step
+    	cur_time = np.array([rospy.get_time()])
+    	dt = cur_time - self.time_previous_step
+    	self.time_previous_step = cur_time
+    	# robot end-effector and goal position
+    	pos = self.compute_forward_kinematics(joint_angles)
+    	pos_d = self.trajectory() 
+    	# error calculations
+    	self.error_d = ((pos_d - pos) - self.error)/dt
+    	self.error = pos_d-pos
+    	# calculations
+    	J_inv = np.linalg.pinv(self.calculate_jacobian(joint_angles))  # calculating the psudeo inverse of Jacobian
+    	dq_d =np.dot(J_inv, ( np.dot(K_d,self.error_d.transpose()) + np.dot(K_p,self.error.transpose()) ) )  # control input (angular velocity of joints)
+    	q_d = joint_angles + (dt * dq_d)  # control input (angular position of joints)
+    	return q_d
 
     def callback(self,data):
-
-        final_coords = self.compute_forward_kinematics(data.data)
-        print(final_coords)
-        
-        # Publish the results
-        self.forward_kinematics.data = final_coords
-        self.forward_kinematics_pub.publish(self.forward_kinematics)
+    	position = data.position
+    	final_coords = self.compute_forward_kinematics(position)
+    	print(final_coords)
+    	
+    	# Publish the results
+        #self.forward_kinematics.data = final_coords
+        #self.forward_kinematics_pub.publish(self.forward_kinematics)
 
 
 
