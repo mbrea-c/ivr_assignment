@@ -44,6 +44,8 @@ class image_converter:
         self.joint_angles = Float64MultiArray()
         self.end_effector_pos_pub = rospy.Publisher("end_effector_pos", Float64MultiArray, queue_size=10)
         self.end_effector_pos = Float64MultiArray()
+        self.target_pos_pub = rospy.Publisher("target_pos", Float64MultiArray, queue_size=10)
+        self.target_pos = Float64MultiArray()
 
 
     def callback_image1(self,data):
@@ -195,7 +197,6 @@ class image_converter:
         [ yellow, blue, green, red ] = coords_3d
         vec_blue_green = green - blue
 
-        print(np.sqrt(np.sum(vec_blue_green**2)))
 
         joint_2_angle = atan2(vec_blue_green[2], vec_blue_green[1]) - pi/2
 
@@ -225,7 +226,7 @@ class image_converter:
         robot_frame_joint_coords = self.get_3d_joint_positions(centroid_world_coords)
         joint_angles = self.get_joint_angles(robot_frame_joint_coords[:4])
 
-        print(joint_angles)
+        print(robot_frame_joint_coords[-3])
 
         self.find_targets(self.cv_image1)
         self.find_targets(self.cv_image2)
@@ -244,6 +245,8 @@ class image_converter:
         self.joint_angles_pub.publish(self.joint_angles)
         self.end_effector_pos.data = robot_frame_joint_coords[3]
         self.end_effector_pos_pub.publish(self.end_effector_pos)
+        self.target_pos.data = robot_frame_joint_coords[4:]
+        self.target_pos_pub.publish(self.end_effector_pos)
 
 
     def x_marks_the_spot(self, image, x, y, color=(0,0,0)):
