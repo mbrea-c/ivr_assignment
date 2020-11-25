@@ -46,6 +46,8 @@ class image_converter:
         self.end_effector_pos = Float64MultiArray()
         self.target_pos_pub = rospy.Publisher("target_pos", Float64MultiArray, queue_size=10)
         self.target_pos = Float64MultiArray()
+        self.avoid_pub = rospy.Publisher("avoid_pos", Float64MultiArray, queue_size=10)
+        self.avoid_pos = Float64MultiArray()
 
 
     def callback_image1(self,data):
@@ -76,7 +78,7 @@ class image_converter:
         contours, hierarchy = cv2.findContours(blobs, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
 
         if len(contours) != 2:
-            print(f"PROBLEM!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1\nthere is {len(contours)} contours")
+            print(f"target detection found {len(contours)} contours instead of 2. attempting to correct...")
 
         def get_centroid_from_contours(cnt):
             M = cv2.moments(cnt)
@@ -140,8 +142,23 @@ class image_converter:
         return np.array([cx, cy], dtype=np.float64)
 
     def handle_missing_centroids(self, centroids_image1, centroids_image2):
-        #TODO: Sort out missing centroids here
-        return (centroids_image1, centroids_image2)
+        def fix_centroid(centroid_tuple):
+            (centroid1, centroid2) = centroid_tuple
+            if centroid1 is None:
+                match = min(filter(lambda elem: elem[0] is not None and elem[1] is not None, zipped_centroids),\
+                        key=lambda elem: abs(elem[1][1] - centroid2[1]))
+                return (match[0], centroid2)
+            elif centroid2 is None:
+                match = min(filter(lambda elem: elem[0] is not None and elem[1] is not None, zipped_centroids),\
+                        key=lambda elem: abs(elem[0][1] - centroid1[1]))
+                return (centroid1, match[1])
+            return centroid_tuple
+
+        zipped_centroids = list(zip(centroids_image1, centroids_image2))
+        fixed_centroids = list(map(fix_centroid, zipped_centroids))
+        return ([i for i,j in fixed_centroids ], [ j for i,j in fixed_centroids ])
+
+                
 
 
 
@@ -153,6 +170,7 @@ class image_converter:
         blobs_image2 = map(lambda hue: self.find_blob(self.cv_image2, hue), self.joint_hues)
         centroids_image2 = list(map(lambda blob: self.find_blob_centroid(blob), blobs_image2))
         centroids_image2 = centroids_image2 + self.find_targets(self.cv_image2)
+
 
         centroids_image1, centroids_image2 = self.handle_missing_centroids(centroids_image1, centroids_image2)
 
@@ -226,7 +244,7 @@ class image_converter:
         robot_frame_joint_coords = self.get_3d_joint_positions(centroid_world_coords)
         joint_angles = self.get_joint_angles(robot_frame_joint_coords[:4])
 
-        print(robot_frame_joint_coords[-3])
+        print(joint_angles)
 
         self.find_targets(self.cv_image1)
         self.find_targets(self.cv_image2)
@@ -237,6 +255,9 @@ class image_converter:
         #vis2 = np.concatenate(vis_blobs[2:], axis=1)
         vis = np.concatenate((self.cv_image1, self.cv_image2), axis=1)
 
+        self.x_marks_the_spot(vis, *centroids[4][0])
+        self.x_marks_the_spot(vis, 800 + centroids[4][1][0], centroids[4][1][1])
+
         im1=cv2.imshow('window1', vis)
         cv2.waitKey(1)
 
@@ -245,8 +266,10 @@ class image_converter:
         self.joint_angles_pub.publish(self.joint_angles)
         self.end_effector_pos.data = robot_frame_joint_coords[3]
         self.end_effector_pos_pub.publish(self.end_effector_pos)
-        self.target_pos.data = robot_frame_joint_coords[4:]
+        self.target_pos.data = robot_frame_joint_coords[4]
         self.target_pos_pub.publish(self.end_effector_pos)
+        self.avoid_pos.data = robot_frame_joint_coords[5]
+        self.avoid_pub.publish(self.avoid_pos)
 
 
     def x_marks_the_spot(self, image, x, y, color=(0,0,0)):
