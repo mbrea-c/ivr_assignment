@@ -26,10 +26,11 @@ class control:
         self.joint_angles_sub = message_filters.Subscriber("/robot/joint_states", JointState)
         self.target_sub = message_filters.Subscriber("/target_pos", Float64MultiArray)
         self.avoid_sub = message_filters.Subscriber("/avoid_pos", Float64MultiArray)
+        self.end_effector_sub = message_filters.Subscriber("/end_effector_pos", Float64MultiArray)
         self.target_pos_true_x = message_filters.Subscriber("/target/x_position_controller/command", Float64, queue_size=10)
         self.target_pos_true_y = message_filters.Subscriber("/target/y_position_controller/command", Float64, queue_size=10)
         self.target_pos_true_z = message_filters.Subscriber("/target/z_position_controller/command", Float64, queue_size=10)
-        self.ts = message_filters.ApproximateTimeSynchronizer([self.joint_angles_sub, self.target_sub, self.avoid_sub, self.target_pos_true_x, self.target_pos_true_y, self.target_pos_true_z], 1, 1, allow_headerless=True)
+        self.ts = message_filters.ApproximateTimeSynchronizer([self.joint_angles_sub, self.target_sub, self.avoid_sub, self.target_pos_true_x, self.target_pos_true_y, self.target_pos_true_z, self.end_effector_sub], 1, 1, allow_headerless=True)
         self.ts.registerCallback(self.callback)
 
 
@@ -111,7 +112,7 @@ class control:
                 -3*np.cos(th2)*np.cos(th3)*np.sin(th4) - 3*np.cos(th4)*np.sin(th2)]])
         return jacobian
 
-    def closed_loop_control(self, joint_angles, pos_d):
+    def closed_loop_control(self, joint_angles, pos_d, pos_end):
         K_p = np.array([[3,0,0],[0,3,0],[0,0,3]])
         K_d = np.array([[0.3,0,0],[0,0.3,0],[0,0,0.3]])
         # estimate time step
@@ -119,7 +120,7 @@ class control:
         dt = cur_time - self.time_previous_step
         self.time_previous_step = cur_time
         # robot end-effector and goal position
-        pos = self.compute_forward_kinematics(joint_angles)
+        pos = pos_end
         # error calculations
         self.error_d = ((pos_d - pos) - self.error)/dt
         self.error = pos_d-pos
@@ -129,7 +130,7 @@ class control:
         q_d = joint_angles + (dt * dq_d)  # control input (angular position of joints)
         return q_d
 
-    def closed_loop_control_with_null_space_thingy(self, joint_angles, pos_d, avoid_d):
+    def closed_loop_control_with_null_space_thingy(self, joint_angles, pos_d, avoid_d, pos_end):
 
         def w(q1,q2,q3,q4):
             return np.linalg.norm(self.compute_forward_kinematics(np.array([q1,q2,q3,q4])) - avoid_d)
@@ -141,7 +142,7 @@ class control:
         dt = cur_time - self.time_previous_step
         self.time_previous_step = cur_time
         # robot end-effector and goal position
-        pos = self.compute_forward_kinematics(joint_angles)
+        pos = pos_end
         # error calculations
         self.error_d = ((pos_d - pos) - self.error)/dt
         self.error = pos_d-pos
@@ -154,12 +155,13 @@ class control:
         q_d = joint_angles + (dt * dq_d)  # control input (angular position of joints)
         return q_d
 
-    def callback(self,joint_states, target_pos, avoid_pos, target_pos_true_x, target_pos_true_y, target_pos_true_z):
+    def callback(self,joint_states, target_pos, avoid_pos, target_pos_true_x, target_pos_true_y, target_pos_true_z, pos_end):
         position = joint_states.position
         final_coords = self.compute_forward_kinematics(position)
         pos_d_true = np.array([target_pos_true_x.data, target_pos_true_y.data, target_pos_true_z.data])
         pos_d = np.array(target_pos.data)
         avoid = np.array(avoid_pos.data)
+        pos_end_vision = pos_end.data
         print(f"target_pos {pos_d}")
         print(f"target_tru {pos_d_true}")
         print(f"target_err {pos_d - pos_d_true}")
@@ -167,7 +169,15 @@ class control:
         print(f"curr_error {self.error}")
         print("-"*20)
         
-        q_d = self.closed_loop_control_with_null_space_thingy(position, pos_d_true,avoid)
+
+        #uncomment the kind of qd you want to run (with forward kinemtics or vision, with or without nullspace control)
+        #with vision end effector for 3.2 and 4.2:
+        #q_d = self.closed_loop_control(position, pos_d, pos_end_vision)
+        q_d = self.closed_loop_control_with_null_space_thingy(position, pos_d, avoid, pos_end_vision)
+
+        #with FK end effector for 3.2 and 4.2:
+        #q_d = self.closed_loop_control(position, pos_d, final_coords)
+        #q_d = self.closed_loop_control_with_null_space_thingy(position, pos_d, avoid, final_coords)
 
         self.joint1.data = q_d[0]       
         self.joint2.data = q_d[1]       
