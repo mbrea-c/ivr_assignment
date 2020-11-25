@@ -135,6 +135,8 @@ class image_converter:
     def find_blob_centroid(self, blob):
         #kernel = np.ones((5, 5), np.uint8)
         #mask = cv2.dilate(blob, kernel, iterations=3)
+        if np.sum(np.sum(blob)) < 1:
+            return None
         mask = blob
         M = cv2.moments(mask)
         cx = M['m10']/M['m00']
@@ -166,10 +168,16 @@ class image_converter:
         blobs_image1 = map(lambda hue: self.find_blob(self.cv_image1, hue), self.joint_hues)
         centroids_image1 = list(map(lambda blob: self.find_blob_centroid(blob), blobs_image1))
         centroids_image1 = centroids_image1 + self.find_targets(self.cv_image1)
-
+        
         blobs_image2 = map(lambda hue: self.find_blob(self.cv_image2, hue), self.joint_hues)
         centroids_image2 = list(map(lambda blob: self.find_blob_centroid(blob), blobs_image2))
         centroids_image2 = centroids_image2 + self.find_targets(self.cv_image2)
+
+        # If end effector is not visible in any camera, it is 
+        # probably inside target sphere
+        if centroids_image1[3] is None and centroids_image2[3] is None:
+            centroids_image1[3] = centroids_image1[4]
+            centroids_image2[3] = centroids_image2[4]
 
 
         centroids_image1, centroids_image2 = self.handle_missing_centroids(centroids_image1, centroids_image2)
@@ -267,7 +275,7 @@ class image_converter:
         self.end_effector_pos.data = robot_frame_joint_coords[3]
         self.end_effector_pos_pub.publish(self.end_effector_pos)
         self.target_pos.data = robot_frame_joint_coords[4]
-        self.target_pos_pub.publish(self.end_effector_pos)
+        self.target_pos_pub.publish(self.target_pos)
         self.avoid_pos.data = robot_frame_joint_coords[5]
         self.avoid_pub.publish(self.avoid_pos)
 
