@@ -15,10 +15,12 @@ class sine_joint_movement:
     def __init__(self):
         rospy.init_node('sine_joint_movement', anonymous=True)
 
+        self.robot_joint1_pub = rospy.Publisher("/robot/joint1_position_controller/command", Float64, queue_size=10)
         self.robot_joint2_pub = rospy.Publisher("/robot/joint2_position_controller/command", Float64, queue_size=10)
         self.robot_joint3_pub = rospy.Publisher("/robot/joint3_position_controller/command", Float64, queue_size=10)
         self.robot_joint4_pub = rospy.Publisher("/robot/joint4_position_controller/command", Float64, queue_size=10)
 
+        self.joint1 = Float64()
         self.joint2 = Float64()
         self.joint3 = Float64()
         self.joint4 = Float64()
@@ -30,10 +32,12 @@ class sine_joint_movement:
     def callback(self):
         while not rospy.is_shutdown():
             t = rospy.get_time() - self.time
+            self.joint1.data = 0
             self.joint2.data = (pi/2)*np.sin(t*pi/15)
             self.joint3.data = (pi/2)*np.sin(t*pi/18)
             self.joint4.data = (pi/2)*np.sin(t*pi/20)
             
+            self.robot_joint1_pub.publish(self.joint1.data)
             self.robot_joint2_pub.publish(self.joint2.data)
             self.robot_joint3_pub.publish(self.joint3.data)
             self.robot_joint4_pub.publish(self.joint4.data)
