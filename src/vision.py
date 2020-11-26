@@ -230,9 +230,9 @@ class image_converter:
         coords_3d_joint2 = list(map(lambda coord: rotation_matrix_2.dot(coord), coords_3d))
         [ yellow, blue, green, red ] = coords_3d_joint2
         vec_blue_green_2 = green - blue
-        joint_3_angle = atan2(vec_blue_green_2[2], vec_blue_green_2[0]) - pi/2
+        joint_3_angle = -(atan2(vec_blue_green_2[2], vec_blue_green_2[0]) - pi/2)
 
-        rotation_matrix_3 = self.get_rotation_about_y(-joint_3_angle)
+        rotation_matrix_3 = self.get_rotation_about_y(joint_3_angle)
         coords_3d_joint3 = list(map(lambda coord: rotation_matrix_3.dot(coord), coords_3d_joint2))
         [ yellow, blue, green, red ] = coords_3d_joint3
         vec_green_red = red - green

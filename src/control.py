@@ -162,11 +162,8 @@ class control:
         pos_d = np.array(target_pos.data)
         avoid = np.array(avoid_pos.data)
         pos_end_vision = pos_end.data
-        print(f"target_pos {pos_d}")
-        print(f"target_tru {pos_d_true}")
-        print(f"target_err {pos_d - pos_d_true}")
-        print(f"currnt_pos {final_coords}")
-        print(f"curr_error {self.error}")
+        print(f"FK: {final_coords}")
+        print(f"VS: {pos_end_vision}")
         print("-"*20)
         
 
